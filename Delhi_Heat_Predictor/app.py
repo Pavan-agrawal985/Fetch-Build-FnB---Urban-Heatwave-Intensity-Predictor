@@ -40,6 +40,8 @@ if st.sidebar.button("Predict Delhi Heat"):
     pressure = data["main"]["pressure"]
     wind = data["wind"]["speed"]
     cloud = data["clouds"]["all"]
+    # temp=45
+    # humidity=30
 
     # Feature Engineering
     max_temp = temp + 2
