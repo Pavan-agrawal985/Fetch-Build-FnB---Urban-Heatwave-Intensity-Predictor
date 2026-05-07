@@ -1,5 +1,6 @@
 import pandas as pd
 import joblib
+from pathlib import Path
 
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
@@ -9,13 +10,17 @@ from sklearn.metrics import accuracy_score
 
 print("Delhi Heat Intensity Model Training")
 
+BASE_DIR = Path(__file__).resolve().parent
+
 # Load Dataset
-df = pd.read_csv("india_weather_data.csv")
+df = pd.read_csv(BASE_DIR / "india_weather_data.csv")
 
 # Filter Delhi Only (Delhi Coordinates)
 df = df[(df["latitude"] == 28.6139) & (df["longitude"] == 77.2090)]
 
 print("Delhi Dataset Size:", df.shape)
+if df.empty:
+    raise ValueError("No Delhi rows found in dataset. Check latitude/longitude filtering.")
 
 # Handle Missing Values
 df = df.fillna(df.mean(numeric_only=True))
@@ -41,7 +46,7 @@ y = df["heatwave"]
 
 # Train Test Split
 X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=42
+    X, y, test_size=0.2, random_state=42, stratify=y
 )
 
 # Scaling for Logistic Regression
@@ -56,7 +61,7 @@ X_test_scaled = scaler.transform(X_test)
 
 print("\nTraining Logistic Regression")
 
-lr = LogisticRegression(max_iter=1000)
+lr = LogisticRegression(max_iter=1000, class_weight="balanced", random_state=42)
 lr.fit(X_train_scaled, y_train)
 
 lr_pred = lr.predict(X_test_scaled)
@@ -73,6 +78,7 @@ print("\nTraining Random Forest")
 rf = RandomForestClassifier(
     n_estimators=300,
     max_depth=12,
+    class_weight="balanced",
     random_state=42
 )
 
@@ -92,8 +98,8 @@ final_model = rf
 print("\nFinal Model Selected: Random Forest")
 
 # Save Model
-joblib.dump(final_model, "delhi_heat_model.pkl")
-joblib.dump(scaler, "scaler.pkl")
+joblib.dump(final_model, BASE_DIR / "delhi_heat_model.pkl")
+joblib.dump(scaler, BASE_DIR / "scaler.pkl")
 
 print("\nModel Saved Successfully")
 

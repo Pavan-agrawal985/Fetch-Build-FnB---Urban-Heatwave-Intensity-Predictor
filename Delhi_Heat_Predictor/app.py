@@ -5,6 +5,7 @@ import joblib
 import plotly.graph_objects as go
 import math
 from datetime import datetime
+from pathlib import Path
 
 st.set_page_config(
     page_title="Delhi Heat Predictor",
@@ -12,9 +13,24 @@ st.set_page_config(
     layout="wide"
 )
 
-# Load Model
-model = joblib.load("delhi_heat_model.pkl")
-scaler = joblib.load("scaler.pkl")
+@st.cache_resource
+def load_model():
+    base_dir = Path(__file__).resolve().parent
+    return joblib.load(base_dir / "delhi_heat_model.pkl")
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_weather(api_key: str):
+    url = (
+        "https://api.openweathermap.org/data/2.5/weather"
+        f"?lat=28.6139&lon=77.2090&appid={api_key}&units=metric"
+    )
+    response = requests.get(url, timeout=15)
+    response.raise_for_status()
+    return response.json()
+
+
+model = load_model()
 
 st.title("🌡️ Delhi Heat Intensity Predictor")
 st.markdown("AI Powered Urban Heat Prediction — Delhi Only")
@@ -28,15 +44,18 @@ API_KEY = st.sidebar.text_input(
 )
 
 if st.sidebar.button("Predict Delhi Heat"):
+    if not API_KEY.strip():
+        st.error("Please enter a valid OpenWeather API key.")
+        st.stop()
 
-    # Delhi Coordinates
-    url = f"https://api.openweathermap.org/data/2.5/weather?lat=28.6139&lon=77.2090&appid={API_KEY}&units=metric"
-
-    response = requests.get(url)
-    data = response.json()
+    try:
+        data = fetch_weather(API_KEY.strip())
+    except requests.RequestException as err:
+        st.error(f"Weather API request failed: {err}")
+        st.stop()
 
     if "main" not in data:
-        st.error("API Error")
+        st.error("API Error: unexpected response format.")
         st.write(data)
         st.stop()
 
@@ -44,8 +63,8 @@ if st.sidebar.button("Predict Delhi Heat"):
     temp = data["main"]["temp"]
     humidity = data["main"]["humidity"]
     pressure = data["main"]["pressure"]
-    wind = data["wind"]["speed"]
-    cloud = data["clouds"]["all"]
+    wind = data.get("wind", {}).get("speed", 0.0)
+    cloud = data.get("clouds", {}).get("all", 0)
     feels_like = data["main"].get("feels_like", temp)
     condition = data["weather"][0]["main"] if data.get("weather") else "Unknown"
     visibility = data.get("visibility", 0) / 1000
@@ -57,8 +76,8 @@ if st.sidebar.button("Predict Delhi Heat"):
     min_temp = temp - 2
     dew_point = temp - ((100 - humidity)/5)
     solar = 500
-    max_humidity = humidity + 5
-    min_humidity = humidity - 5
+    max_humidity = min(100, humidity + 5)
+    min_humidity = max(0, humidity - 5)
 
     features = pd.DataFrame([{
         "max_temperature": max_temp,
@@ -110,11 +129,12 @@ if st.sidebar.button("Predict Delhi Heat"):
 
     st.markdown(f"### Risk Level: :{color}[{level}]")
 
-    # Stable semicircle gauge + red hand indicator.
+    # Stable semicircle gauge + correctly anchored red hand indicator.
     gauge_value = max(0.0, min(float(probability * 100), 100.0))
     needle_angle = math.radians(180 - (gauge_value * 1.8))
-    center_x, center_y = 0.5, 0.5
-    needle_length = 0.40
+    # For Plotly semicircle gauge, the dial center is at bottom-middle.
+    center_x, center_y = 0.5, 0.0
+    needle_length = 0.48
     needle_x = center_x + needle_length * math.cos(needle_angle)
     needle_y = center_y + needle_length * math.sin(needle_angle)
 
@@ -155,10 +175,10 @@ if st.sidebar.button("Predict Delhi Heat"):
         type="circle",
         xref="paper",
         yref="paper",
-        x0=center_x - 0.028,
-        y0=center_y - 0.028,
-        x1=center_x + 0.028,
-        y1=center_y + 0.028,
+        x0=center_x - 0.03,
+        y0=center_y - 0.03,
+        x1=center_x + 0.03,
+        y1=center_y + 0.03,
         fillcolor="#D9DEE8",
         line={"color": "#94A3B8", "width": 2}
     )
