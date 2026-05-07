@@ -28,6 +28,20 @@ df = df.fillna(df.mean(numeric_only=True))
 # Ensure Binary Target
 df["heatwave"] = df["heatwave"].astype(int)
 
+# Basic physical-range cleanup to reduce noisy/outlier-driven behavior.
+df = df[
+    (df["max_temperature"].between(-10, 60)) &
+    (df["min_temperature"].between(-20, 50)) &
+    (df["dew_point"].between(-20, 50)) &
+    (df["wind_speed"].between(0, 60)) &
+    (df["cloud_cover"].between(0, 100)) &
+    (df["pressure_surface_level"].between(850, 1100)) &
+    (df["solar_radiation"].between(0, 1400))
+].copy()
+df["max_humidity"] = df["max_humidity"].clip(lower=0, upper=100)
+df["min_humidity"] = df["min_humidity"].clip(lower=0, upper=100)
+print("Delhi Dataset Size (after cleaning):", df.shape)
+
 # Features
 features = [
     "max_temperature",

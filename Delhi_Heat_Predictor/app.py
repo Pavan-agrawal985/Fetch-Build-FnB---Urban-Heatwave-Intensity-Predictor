@@ -32,6 +32,40 @@ def fetch_weather(api_key: str):
 
 model = load_model()
 
+
+def monotonic_temperature_calibration(
+    model_obj,
+    base_temp: float,
+    humidity: float,
+    wind: float,
+    cloud: float,
+    pressure: float,
+    solar: float = 500.0
+) -> float:
+    # Enforce non-decreasing probability with temperature for fixed context.
+    calibrated = 0.0
+    start_temp = 30
+    end_temp = int(max(start_temp, round(base_temp)))
+    humidity = max(0.0, min(100.0, float(humidity)))
+
+    for t in range(start_temp, end_temp + 1):
+        t = float(t)
+        row = pd.DataFrame([{
+            "max_temperature": t + 2,
+            "min_temperature": t - 2,
+            "dew_point": t - ((100 - humidity) / 5),
+            "wind_speed": float(wind),
+            "cloud_cover": float(cloud),
+            "pressure_surface_level": float(pressure),
+            "solar_radiation": float(solar),
+            "max_humidity": min(100, humidity + 5),
+            "min_humidity": max(0, humidity - 5)
+        }])
+        p = float(model_obj.predict_proba(row)[0][1])
+        calibrated = max(calibrated, p)
+
+    return calibrated
+
 st.title("🌡️ Delhi Heat Intensity Predictor")
 st.markdown("AI Powered Urban Heat Prediction — Delhi Only")
 
@@ -60,6 +94,8 @@ if st.sidebar.button("Predict Delhi Heat"):
         st.stop()
 
     # Extract Weather
+    #temp=50
+    #humidity=15
     temp = data["main"]["temp"]
     humidity = data["main"]["humidity"]
     pressure = data["main"]["pressure"]
@@ -68,8 +104,7 @@ if st.sidebar.button("Predict Delhi Heat"):
     feels_like = data["main"].get("feels_like", temp)
     condition = data["weather"][0]["main"] if data.get("weather") else "Unknown"
     visibility = data.get("visibility", 0) / 1000
-    # temp=45
-    # humidity=30
+    
 
     # Feature Engineering
     max_temp = temp + 2
@@ -92,8 +127,17 @@ if st.sidebar.button("Predict Delhi Heat"):
     }])
 
     # Prediction
-    prediction = model.predict(features)[0]
-    probability = model.predict_proba(features)[0][1]
+    raw_probability = float(model.predict_proba(features)[0][1])
+    probability = monotonic_temperature_calibration(
+        model_obj=model,
+        base_temp=float(temp),
+        humidity=float(humidity),
+        wind=float(wind),
+        cloud=float(cloud),
+        pressure=float(pressure),
+        solar=float(solar)
+    )
+    prediction = int(probability >= 0.5)
 
     # Risk Level
     if probability < 0.3:
@@ -201,6 +245,7 @@ if st.sidebar.button("Predict Delhi Heat"):
 
     st.progress(gauge_value / 100)
     st.caption(f"Live fetch time: {datetime.now().strftime('%d %b %Y, %I:%M:%S %p')}")
+    st.caption(f"Raw model: {raw_probability*100:.2f}% | Calibrated: {probability*100:.2f}%")
 
     risk_note = (
         "Low risk. Continue monitoring as conditions can change rapidly."
