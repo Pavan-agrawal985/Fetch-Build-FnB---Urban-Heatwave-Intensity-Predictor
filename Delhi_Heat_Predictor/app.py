@@ -478,12 +478,23 @@ st.sidebar.markdown("""
 
 st.sidebar.markdown("### Control Panel")
 
-API_KEY = st.sidebar.text_input(
-    "OpenWeather API Key",
-    value="01f0ef0b94a5300bb9ac14a0d4bed884",
-    type="password",
-    help="Required for live weather data ingestion"
+data_mode = st.sidebar.toggle(
+    "Manual Input",
+    value=False,
+    help="Toggle ON to manually enter temperature & humidity instead of fetching live data"
 )
+
+if data_mode:
+    manual_temp = st.sidebar.number_input(
+        "Temperature (°C)", min_value=-10.0, max_value=60.0, value=35.0, step=0.5,
+        help="Current temperature in degrees Celsius"
+    )
+    manual_humidity = st.sidebar.number_input(
+        "Humidity (%)", min_value=0, max_value=100, value=50, step=1,
+        help="Current relative humidity percentage"
+    )
+else:
+    API_KEY = "01f0ef0b94a5300bb9ac14a0d4bed884"
 
 st.sidebar.markdown("---")
 
@@ -503,14 +514,14 @@ predict_btn = st.sidebar.button(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("""
+st.sidebar.markdown(f"""
 <div class="model-info-card">
     <strong style="color: #06b6d4;">Model Specs</strong><br>
     Algorithm: Random Forest / LR<br>
     Features: 9 meteorological<br>
     Target: Delhi (28.61°N, 77.21°E)<br>
     Calibration: Monotonic Temp.<br>
-    Data Source: OpenWeatherMap
+    Data Source: {"Manual Input" if data_mode else "OpenWeatherMap"}
 </div>
 """, unsafe_allow_html=True)
 
@@ -531,30 +542,36 @@ st.markdown("""
 
 # ─── MAIN CONTENT ────────────────────────────────────────────────────────────
 if predict_btn:
-    if not API_KEY.strip():
-        st.error("Please enter a valid OpenWeather API key.")
-        st.stop()
+    if data_mode:
+        temp = float(manual_temp)
+        humidity = int(manual_humidity)
+        pressure = 1013.0
+        wind = 3.0
+        cloud = 25
+        feels_like = temp + (0.5 if humidity > 60 else -0.5)
+        condition = "Manual"
+        visibility = 5.0
+    else:
+        with st.spinner("Ingesting live meteorological data..."):
+            try:
+                data = fetch_weather(API_KEY.strip())
+            except requests.RequestException as err:
+                st.error(f"Weather API request failed: {err}")
+                st.stop()
 
-    with st.spinner("Ingesting live meteorological data..."):
-        try:
-            data = fetch_weather(API_KEY.strip())
-        except requests.RequestException as err:
-            st.error(f"Weather API request failed: {err}")
+        if "main" not in data:
+            st.error("API Error: unexpected response format.")
+            st.write(data)
             st.stop()
 
-    if "main" not in data:
-        st.error("API Error: unexpected response format.")
-        st.write(data)
-        st.stop()
-
-    temp = data["main"]["temp"]
-    humidity = data["main"]["humidity"]
-    pressure = data["main"]["pressure"]
-    wind = data.get("wind", {}).get("speed", 0.0)
-    cloud = data.get("clouds", {}).get("all", 0)
-    feels_like = data["main"].get("feels_like", temp)
-    condition = data["weather"][0]["main"] if data.get("weather") else "Unknown"
-    visibility = data.get("visibility", 0) / 1000
+        temp = data["main"]["temp"]
+        humidity = data["main"]["humidity"]
+        pressure = data["main"]["pressure"]
+        wind = data.get("wind", {}).get("speed", 0.0)
+        cloud = data.get("clouds", {}).get("all", 0)
+        feels_like = data["main"].get("feels_like", temp)
+        condition = data["weather"][0]["main"] if data.get("weather") else "Unknown"
+        visibility = data.get("visibility", 0) / 1000
 
     max_temp = temp + 2
     min_temp = temp - 2
@@ -869,10 +886,10 @@ else:
         </div>
         """, unsafe_allow_html=True)
     with s2:
-        st.markdown("""
+        st.markdown(f"""
         <div class="metric-card">
             <div class="metric-label">DATA SOURCE</div>
-            <div class="metric-value" style="font-size: 1.2rem;">OpenWeather</div>
+            <div class="metric-value" style="font-size: 1.2rem;">{"Manual" if data_mode else "OpenWeather"}</div>
         </div>
         """, unsafe_allow_html=True)
     with s3:
