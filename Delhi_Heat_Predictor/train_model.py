@@ -1,12 +1,14 @@
+import numpy as np
 import pandas as pd
 import joblib
 from pathlib import Path
 
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, StratifiedKFold, cross_validate
 from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, f1_score, make_scorer
 
 print("Delhi Heat Intensity Model Training")
 
@@ -58,69 +60,117 @@ features = [
 X = df[features]
 y = df["heatwave"]
 
-# Train Test Split
-X_train, X_test, y_train, y_test = train_test_split(
+# Hold-out test set (20%) — kept unseen until the very end
+X_train_full, X_test, y_train_full, y_test = train_test_split(
     X, y, test_size=0.2, random_state=42, stratify=y
 )
 
-# Scaling for Logistic Regression
-scaler = StandardScaler()
+# ============================================================
+# k-Fold Cross-Validation Setup
+# ============================================================
 
-X_train_scaled = scaler.fit_transform(X_train)
-X_test_scaled = scaler.transform(X_test)
+K = 5
+skf = StratifiedKFold(n_splits=K, shuffle=True, random_state=42)
+
+scoring = {
+    "accuracy": "accuracy",
+    "f1": make_scorer(f1_score, zero_division=0),
+}
+
+def report_cv(name: str, cv_results: dict) -> None:
+    """Pretty-print per-fold and mean scores from cross_validate results."""
+    print(f"\n{'=' * 50}")
+    print(f"  {name} -- {K}-Fold Cross-Validation Results")
+    print(f"{'=' * 50}")
+    for metric in ("accuracy", "f1"):
+        scores = cv_results[f"test_{metric}"]
+        print(f"\n  {metric.upper()} per fold: ", end="")
+        print("  ".join(f"Fold {i+1}: {s:.4f}" for i, s in enumerate(scores)))
+        print(f"  Mean {metric.upper()}: {scores.mean():.4f}  (±{scores.std():.4f})")
 
 # ----------------------------
-# Logistic Regression (Baseline)
+# Logistic Regression (Baseline) — with scaling inside a Pipeline
 # ----------------------------
 
-print("\nTraining Logistic Regression")
+lr_pipeline = Pipeline([
+    ("scaler", StandardScaler()),
+    ("lr", LogisticRegression(max_iter=1000, class_weight="balanced", random_state=42)),
+])
 
-lr = LogisticRegression(max_iter=1000, class_weight="balanced", random_state=42)
-lr.fit(X_train_scaled, y_train)
-
-lr_pred = lr.predict(X_test_scaled)
-lr_acc = accuracy_score(y_test, lr_pred)
-
-print("Logistic Regression Accuracy:", lr_acc)
+print("\nRunning Logistic Regression k-Fold CV ...")
+lr_cv = cross_validate(lr_pipeline, X_train_full, y_train_full,
+                       cv=skf, scoring=scoring, return_train_score=False)
+report_cv("Logistic Regression", lr_cv)
 
 # ----------------------------
 # Random Forest (Main Model)
 # ----------------------------
 
-print("\nTraining Random Forest")
-
-rf = RandomForestClassifier(
+rf_model = RandomForestClassifier(
     n_estimators=300,
     max_depth=12,
     class_weight="balanced",
-    random_state=42
+    random_state=42,
 )
 
-rf.fit(X_train, y_train)
+print("\nRunning Random Forest k-Fold CV ...")
+rf_cv = cross_validate(rf_model, X_train_full, y_train_full,
+                       cv=skf, scoring=scoring, return_train_score=False)
+report_cv("Random Forest", rf_cv)
 
-rf_pred = rf.predict(X_test)
-rf_acc = accuracy_score(y_test, rf_pred)
+# ============================================================
+# Compare models and pick the best by mean CV F1
+# ============================================================
 
-print("Random Forest Accuracy:", rf_acc)
+lr_mean_f1 = lr_cv["test_f1"].mean()
+rf_mean_f1 = rf_cv["test_f1"].mean()
 
-# ----------------------------
-# Final Model (Random Forest)
-# ----------------------------
+print(f"\n{'=' * 50}")
+print("  Model Comparison (Mean CV F1)")
+print(f"{'=' * 50}")
+print(f"  Logistic Regression : {lr_mean_f1:.4f}")
+print(f"  Random Forest       : {rf_mean_f1:.4f}")
 
-final_model = rf
+best_name = "Random Forest" if rf_mean_f1 >= lr_mean_f1 else "Logistic Regression"
+print(f"\n  >> Best model: {best_name}")
 
-print("\nFinal Model Selected: Random Forest")
+# ============================================================
+# Retrain the best model on the FULL training set & evaluate on hold-out test set
+# ============================================================
 
-# Save Model
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train_full)
+X_test_scaled = scaler.transform(X_test)
+
+lr_final = LogisticRegression(max_iter=1000, class_weight="balanced", random_state=42)
+lr_final.fit(X_train_scaled, y_train_full)
+
+rf_final = RandomForestClassifier(
+    n_estimators=300, max_depth=12, class_weight="balanced", random_state=42
+)
+rf_final.fit(X_train_full, y_train_full)
+
+print(f"\n{'=' * 50}")
+print("  Hold-out Test Set Evaluation")
+print(f"{'=' * 50}")
+print(f"  Logistic Regression -- Accuracy: {accuracy_score(y_test, lr_final.predict(X_test_scaled)):.4f}"
+      f"  F1: {f1_score(y_test, lr_final.predict(X_test_scaled), zero_division=0):.4f}")
+print(f"  Random Forest       -- Accuracy: {accuracy_score(y_test, rf_final.predict(X_test)):.4f}"
+      f"  F1: {f1_score(y_test, rf_final.predict(X_test), zero_division=0):.4f}")
+
+final_model = rf_final if rf_mean_f1 >= lr_mean_f1 else lr_final
+print(f"\n  Final Model Selected: {best_name}")
+
+# Save Model & Scaler
 joblib.dump(final_model, BASE_DIR / "delhi_heat_model.pkl")
 joblib.dump(scaler, BASE_DIR / "scaler.pkl")
+print("  Model & scaler saved successfully")
 
-print("\nModel Saved Successfully")
-
-# Feature Importance
-print("\nFeature Importance:")
-
-importance = rf.feature_importances_
-
-for i, v in enumerate(importance):
-    print(features[i], ":", round(v,3))
+# Feature Importance (Random Forest only)
+if isinstance(final_model, RandomForestClassifier):
+    print(f"\n{'=' * 50}")
+    print("  Feature Importance")
+    print(f"{'=' * 50}")
+    for name, imp in sorted(zip(features, final_model.feature_importances_),
+                            key=lambda x: x[1], reverse=True):
+        print(f"  {name:30s} {imp:.4f}")
