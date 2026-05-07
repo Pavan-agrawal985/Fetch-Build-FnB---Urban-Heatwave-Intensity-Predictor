@@ -10,7 +10,12 @@ from sklearn.metrics import accuracy_score
 print("Delhi Heat Intensity Model Training")
 
 # Load Dataset
-df = pd.read_csv("india_weather_data.csv")
+import os
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+csv_path = os.path.join(BASE_DIR, "india_weather_data.csv")
+
+df = pd.read_csv(csv_path)
 
 # Filter Delhi Only (Delhi Coordinates)
 df = df[(df["latitude"] == 28.6139) & (df["longitude"] == 77.2090)]
