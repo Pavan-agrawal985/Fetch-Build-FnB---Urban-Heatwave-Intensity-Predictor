@@ -3,6 +3,8 @@ import requests
 import pandas as pd
 import joblib
 import plotly.graph_objects as go
+import math
+from datetime import datetime
 
 st.set_page_config(
     page_title="Delhi Heat Predictor",
@@ -19,12 +21,16 @@ st.markdown("AI Powered Urban Heat Prediction — Delhi Only")
 
 st.sidebar.header("Delhi Live Prediction")
 
-API_KEY = st.sidebar.text_input("01f0ef0b94a5300bb9ac14a0d4bed884")
+API_KEY = st.sidebar.text_input(
+    "OpenWeather API Key",
+    value="01f0ef0b94a5300bb9ac14a0d4bed884",
+    type="password"
+)
 
 if st.sidebar.button("Predict Delhi Heat"):
 
     # Delhi Coordinates
-    url = f"https://api.openweathermap.org/data/2.5/weather?lat=28.6139&lon=77.2090&appid=01f0ef0b94a5300bb9ac14a0d4bed884&units=metric"
+    url = f"https://api.openweathermap.org/data/2.5/weather?lat=28.6139&lon=77.2090&appid={API_KEY}&units=metric"
 
     response = requests.get(url)
     data = response.json()
@@ -40,6 +46,9 @@ if st.sidebar.button("Predict Delhi Heat"):
     pressure = data["main"]["pressure"]
     wind = data["wind"]["speed"]
     cloud = data["clouds"]["all"]
+    feels_like = data["main"].get("feels_like", temp)
+    condition = data["weather"][0]["main"] if data.get("weather") else "Unknown"
+    visibility = data.get("visibility", 0) / 1000
     # temp=45
     # humidity=30
 
@@ -85,6 +94,10 @@ if st.sidebar.button("Predict Delhi Heat"):
     col2.metric("Humidity", f"{humidity}%")
     col3.metric("Wind Speed", f"{wind} m/s")
 
+    col4, col5 = st.columns(2)
+    col4.metric("Pressure", f"{pressure} hPa")
+    col5.metric("Cloud Cover", f"{cloud}%")
+
     st.divider()
 
     # Final Output
@@ -97,22 +110,94 @@ if st.sidebar.button("Predict Delhi Heat"):
 
     st.markdown(f"### Risk Level: :{color}[{level}]")
 
-    # Gauge Chart
+    # Stable semicircle gauge + red hand indicator.
+    gauge_value = max(0.0, min(float(probability * 100), 100.0))
+    needle_angle = math.radians(180 - (gauge_value * 1.8))
+    center_x, center_y = 0.5, 0.5
+    needle_length = 0.40
+    needle_x = center_x + needle_length * math.cos(needle_angle)
+    needle_y = center_y + needle_length * math.sin(needle_angle)
+
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
-        value=probability*100,
-        title={'text': "Delhi Heat Risk"},
+        value=gauge_value,
+        title={"text": "Delhi Heat Risk"},
+        number={"suffix": "", "font": {"size": 64, "color": "#E5E7EB"}},
         gauge={
-            'axis': {'range': [0, 100]},
-            'steps': [
-                {'range': [0, 30], 'color': "green"},
-                {'range': [30, 60], 'color': "orange"},
-                {'range': [60, 100], 'color': "red"}
-            ]
+            "axis": {"range": [0, 100], "tickwidth": 2, "tickcolor": "#D1D5DB"},
+            "bar": {"color": "rgba(0,0,0,0)", "thickness": 0.12},
+            "bgcolor": "#070B18",
+            "steps": [
+                {"range": [0, 30], "color": "#16A34A"},
+                {"range": [30, 60], "color": "#F59E0B"},
+                {"range": [60, 100], "color": "#EF4444"}
+            ],
+            "threshold": {
+                "line": {"color": "#E11D2E", "width": 0},
+                "thickness": 0.0,
+                "value": gauge_value
+            }
         }
     ))
 
+    # Draw a true red hand from center to current value.
+    fig.add_shape(
+        type="line",
+        xref="paper",
+        yref="paper",
+        x0=center_x,
+        y0=center_y,
+        x1=needle_x,
+        y1=needle_y,
+        line={"color": "#E11D2E", "width": 7}
+    )
+    fig.add_shape(
+        type="circle",
+        xref="paper",
+        yref="paper",
+        x0=center_x - 0.028,
+        y0=center_y - 0.028,
+        x1=center_x + 0.028,
+        y1=center_y + 0.028,
+        fillcolor="#D9DEE8",
+        line={"color": "#94A3B8", "width": 2}
+    )
+
+    fig.update_layout(
+        margin={"l": 20, "r": 20, "t": 30, "b": 10},
+        paper_bgcolor="#070B18",
+        plot_bgcolor="#070B18",
+        height=460
+    )
+
     st.plotly_chart(fig, use_container_width=True)
+
+    # Detailed result dashboard
+    st.subheader("Detailed Heat Dashboard")
+    d1, d2, d3 = st.columns(3)
+    d1.metric("Dew Point", f"{dew_point:.1f} °C")
+    d2.metric("Visibility", f"{visibility:.1f} km")
+    d3.metric("Weather Condition", condition)
+
+    st.progress(gauge_value / 100)
+    st.caption(f"Live fetch time: {datetime.now().strftime('%d %b %Y, %I:%M:%S %p')}")
+
+    risk_note = (
+        "Low risk. Continue monitoring as conditions can change rapidly."
+        if level == "Low"
+        else "Moderate risk. Stay hydrated, avoid prolonged direct sun exposure."
+        if level == "Medium"
+        else "High heat risk. Limit outdoor exposure and follow heat advisory precautions."
+    )
+    if level == "Low":
+        st.success(risk_note)
+    elif level == "Medium":
+        st.warning(risk_note)
+    else:
+        st.error(risk_note)
+
+    with st.expander("Model Input Features Used"):
+        st.dataframe(features, use_container_width=True)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("Delhi Climate AI System")
